@@ -65,23 +65,23 @@ func isAllowedOrigin(origin string) bool {
 var staticFS embed.FS
 
 type Server struct {
-	mu              sync.Mutex
-	cfg             *config.Config
-	sim             *simulator.Simulator
-	cancel          context.CancelFunc
-	agentLoader     *useragent.Loader
-	proxyService    *proxy.Service
-	hub             *Hub
-	metrics         *metrics.MetricsCollector
-	metricsWS       *MetricsWebSocket
-	done            chan struct{} // BUG FIX #6/#7: Background goroutine'leri durdurmak için
+	mu           sync.Mutex
+	cfg          *config.Config
+	sim          *simulator.Simulator
+	cancel       context.CancelFunc
+	agentLoader  *useragent.Loader
+	proxyService *proxy.Service
+	hub          *Hub
+	metrics      *metrics.MetricsCollector
+	metricsWS    *MetricsWebSocket
+	done         chan struct{} // BUG FIX #6/#7: Background goroutine'leri durdurmak için
 }
 
 // Hub WebSocket ve SSE abonelerine broadcast (status + log)
 type Hub struct {
-	mu       sync.RWMutex
-	conns    map[*websocket.Conn]chan []byte
-	logSubs  []chan string
+	mu      sync.RWMutex
+	conns   map[*websocket.Conn]chan []byte
+	logSubs []chan string
 }
 
 func NewHub() *Hub {
@@ -331,36 +331,38 @@ func maxInt64(a, b int64) int64 {
 }
 
 type configFile struct {
-	PROXY_HOST             string   `json:"PROXY_HOST"`
-	PROXY_PORT             int      `json:"PROXY_PORT"`
-	PROXY_USER             string   `json:"PROXY_USER"`
-	PROXY_PASS             string   `json:"PROXY_PASS"`
-	TargetDomain           string   `json:"targetDomain"`
-	FallbackGAID           string   `json:"fallbackGAID"`
-	MaxPages               int      `json:"maxPages"`
-	DurationMinutes        int      `json:"durationMinutes"`
-	HitsPerMinute          int      `json:"hitsPerMinute"`
-	MaxConcurrentVisits    int      `json:"maxConcurrentVisits"`
-	OutputDir              string   `json:"outputDir"`
-	ExportFormat           string   `json:"exportFormat"`
-	CanvasFingerprint      bool     `json:"canvasFingerprint"`
-	ScrollStrategy         string   `json:"scrollStrategy"`
-	SendScrollEvent        bool     `json:"sendScrollEvent"`
-	UseSitemap             bool     `json:"useSitemap"`
-	SitemapHomepageWeight  int      `json:"sitemapHomepageWeight"`
-	Keywords               []string `json:"keywords"`
-	UsePublicProxy         bool     `json:"usePublicProxy"`
-	ProxySourceURLs        []string `json:"proxySourceURLs"`
-	GitHubRepos            []string `json:"githubRepos"`
-	CheckerWorkers         int      `json:"checkerWorkers"`
+	PROXY_HOST            string   `json:"PROXY_HOST"`
+	PROXY_PORT            int      `json:"PROXY_PORT"`
+	PROXY_USER            string   `json:"PROXY_USER"`
+	PROXY_PASS            string   `json:"PROXY_PASS"`
+	TargetDomain          string   `json:"targetDomain"`
+	FallbackGAID          string   `json:"fallbackGAID"`
+	MaxPages              int      `json:"maxPages"`
+	DurationMinutes       int      `json:"durationMinutes"`
+	HitsPerMinute         int      `json:"hitsPerMinute"`
+	MaxConcurrentVisits   int      `json:"maxConcurrentVisits"`
+	OutputDir             string   `json:"outputDir"`
+	ExportFormat          string   `json:"exportFormat"`
+	CanvasFingerprint     bool     `json:"canvasFingerprint"`
+	ScrollStrategy        string   `json:"scrollStrategy"`
+	SendScrollEvent       bool     `json:"sendScrollEvent"`
+	UseSitemap            bool     `json:"useSitemap"`
+	SitemapHomepageWeight int      `json:"sitemapHomepageWeight"`
+	Keywords              []string `json:"keywords"`
+	UsePublicProxy        bool     `json:"usePublicProxy"`
+	ProxySourceURLs       []string `json:"proxySourceURLs"`
+	GitHubRepos           []string `json:"githubRepos"`
+	CheckerWorkers        int      `json:"checkerWorkers"`
 	// Private proxy alanları
-	PrivateProxies    []privateProxyFile `json:"privateProxies"`
-	UsePrivateProxy   bool               `json:"usePrivateProxy"`
+	PrivateProxies  []privateProxyFile `json:"privateProxies"`
+	UsePrivateProxy bool               `json:"usePrivateProxy"`
 	// Yeni alanlar
-	DeviceType        string   `json:"deviceType"`
-	DeviceBrands      []string `json:"deviceBrands"`
-	ReferrerKeyword   string   `json:"referrerKeyword"`
-	ReferrerEnabled   bool     `json:"referrerEnabled"`
+	DeviceType      string   `json:"deviceType"`
+	DeviceBrands    []string `json:"deviceBrands"`
+	ReferrerKeyword string   `json:"referrerKeyword"`
+	ReferrerEnabled bool     `json:"referrerEnabled"`
+	// BUG FIX: Tüm ayarların korunması için tam config anlık görüntüsü
+	AppConfig json.RawMessage `json:"appConfig,omitempty"`
 }
 
 type privateProxyFile struct {
@@ -378,14 +380,14 @@ func saveConfigToFile(cfg *config.Config) {
 		exeDir = filepath.Dir(exe)
 	}
 	wd, _ := os.Getwd()
-	
+
 	// Priority order: exe directory > working directory > current directory
 	paths := []string{
 		filepath.Join(exeDir, "config.json"),
 		filepath.Join(wd, "config.json"),
 		"config.json",
 	}
-	
+
 	// Private proxy'leri dönüştür
 	var privateProxies []privateProxyFile
 	for _, pp := range cfg.PrivateProxies {
@@ -397,54 +399,60 @@ func saveConfigToFile(cfg *config.Config) {
 			Protocol: pp.Protocol,
 		})
 	}
-	
+
+	// BUG FIX: Tüm ayarları koruyan tam config anlık görüntüsü (appConfig) hazırla.
+	// Önceden sadece alt küme yazıldığı için uygulama yeniden başlatıldığında
+	// (geo, bounce, davranış, analytics event vb.) ayarlar sıfırlanıyordu.
+	legacy := configFile{
+		PROXY_HOST:            cfg.ProxyHost,
+		PROXY_PORT:            cfg.ProxyPort,
+		PROXY_USER:            cfg.ProxyUser,
+		PROXY_PASS:            cfg.ProxyPass,
+		TargetDomain:          cfg.TargetDomain,
+		FallbackGAID:          cfg.GtagID,
+		MaxPages:              cfg.MaxPages,
+		DurationMinutes:       cfg.DurationMinutes,
+		HitsPerMinute:         cfg.HitsPerMinute,
+		MaxConcurrentVisits:   cfg.MaxConcurrentVisits,
+		OutputDir:             cfg.OutputDir,
+		ExportFormat:          cfg.ExportFormat,
+		CanvasFingerprint:     cfg.CanvasFingerprint,
+		ScrollStrategy:        cfg.ScrollStrategy,
+		SendScrollEvent:       cfg.SendScrollEvent,
+		UseSitemap:            cfg.UseSitemap,
+		SitemapHomepageWeight: cfg.SitemapHomepageWeight,
+		Keywords:              cfg.Keywords,
+		UsePublicProxy:        cfg.UsePublicProxy,
+		ProxySourceURLs:       cfg.ProxySourceURLs,
+		GitHubRepos:           cfg.GitHubRepos,
+		CheckerWorkers:        cfg.CheckerWorkers,
+		// Private proxy alanları
+		PrivateProxies:  privateProxies,
+		UsePrivateProxy: cfg.UsePrivateProxy,
+		// Yeni alanlar
+		DeviceType:      cfg.DeviceType,
+		DeviceBrands:    cfg.DeviceBrands,
+		ReferrerKeyword: cfg.ReferrerKeyword,
+		ReferrerEnabled: cfg.ReferrerEnabled,
+	}
+	legacy.AppConfig, _ = json.Marshal(cfg)
+
 	// SECURITY FIX: Save config to all possible locations, log success/failure
 	var savedPath string
 	var saveErr error
-	
+
 	for _, p := range paths {
 		dir := filepath.Dir(p)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			continue
 		}
-		
-		data, err := json.MarshalIndent(configFile{
-			PROXY_HOST:            cfg.ProxyHost,
-			PROXY_PORT:            cfg.ProxyPort,
-			PROXY_USER:            cfg.ProxyUser,
-			PROXY_PASS:            cfg.ProxyPass,
-			TargetDomain:          cfg.TargetDomain,
-			FallbackGAID:          cfg.GtagID,
-			MaxPages:              cfg.MaxPages,
-			DurationMinutes:       cfg.DurationMinutes,
-			HitsPerMinute:         cfg.HitsPerMinute,
-			MaxConcurrentVisits:   cfg.MaxConcurrentVisits,
-			OutputDir:             cfg.OutputDir,
-			ExportFormat:          cfg.ExportFormat,
-			CanvasFingerprint:     cfg.CanvasFingerprint,
-			ScrollStrategy:        cfg.ScrollStrategy,
-			SendScrollEvent:       cfg.SendScrollEvent,
-			UseSitemap:            cfg.UseSitemap,
-			SitemapHomepageWeight: cfg.SitemapHomepageWeight,
-			Keywords:              cfg.Keywords,
-			UsePublicProxy:        cfg.UsePublicProxy,
-			ProxySourceURLs:       cfg.ProxySourceURLs,
-			GitHubRepos:           cfg.GitHubRepos,
-			CheckerWorkers:        cfg.CheckerWorkers,
-			// Private proxy alanları
-			PrivateProxies:    privateProxies,
-			UsePrivateProxy:   cfg.UsePrivateProxy,
-			// Yeni alanlar
-			DeviceType:        cfg.DeviceType,
-			DeviceBrands:      cfg.DeviceBrands,
-			ReferrerKeyword:   cfg.ReferrerKeyword,
-			ReferrerEnabled:   cfg.ReferrerEnabled,
-		}, "", "  ")
+
+		data, err := json.MarshalIndent(legacy, "", "  ")
 		if err != nil {
 			saveErr = err
 			continue
 		}
-		
+
 		// SECURITY FIX: Tighter file permissions — owner read/write only (CWE-732)
 		if err := os.WriteFile(p, data, 0600); err == nil {
 			savedPath = p
@@ -455,7 +463,7 @@ func saveConfigToFile(cfg *config.Config) {
 			saveErr = err
 		}
 	}
-	
+
 	if savedPath == "" {
 		log.Printf("[ERROR] Config kaydedilemedi: %v", saveErr)
 	}
@@ -468,7 +476,7 @@ func loadConfig(dirs []string) (*config.Config, error) {
 		exeDir = filepath.Dir(exe)
 	}
 	wd, _ := os.Getwd()
-	
+
 	// Priority order: exe directory > working directory > provided dirs
 	allDirs := make([]string, 0, len(dirs)+2)
 	if exeDir != "" {
@@ -478,7 +486,7 @@ func loadConfig(dirs []string) (*config.Config, error) {
 		allDirs = append(allDirs, wd)
 	}
 	allDirs = append(allDirs, dirs...)
-	
+
 	for _, d := range allDirs {
 		if d == "" {
 			continue
@@ -585,18 +593,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	s.mu.Lock()
 	running := s.cancel != nil
 	s.mu.Unlock()
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":     "healthy",
-		"uptime":     time.Since(serverStartTime).String(),
-		"running":    running,
-		"version":    "2.5.2",
-		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"status":    "healthy",
+		"uptime":    time.Since(serverStartTime).String(),
+		"running":   running,
+		"version":   "2.5.2",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
@@ -606,7 +614,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		cfg := s.cfg
 		s.mu.Unlock()
-		
+
 		// SECURITY FIX: Private proxy'leri API formatına dönüştür - credential maskeleme (CWE-200)
 		var privateProxiesAPI []map[string]interface{}
 		for _, pp := range cfg.PrivateProxies {
@@ -626,80 +634,83 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				"protocol": pp.Protocol,
 			})
 		}
-		
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"target_domain":          cfg.TargetDomain,
-			"max_pages":              cfg.MaxPages,
-			"duration_minutes":       cfg.DurationMinutes,
-			"hits_per_minute":        cfg.HitsPerMinute,
-			"max_concurrent_visits":  cfg.MaxConcurrentVisits,
-			"output_dir":             cfg.OutputDir,
-			"export_format":          cfg.ExportFormat,
-			"canvas_fingerprint":     cfg.CanvasFingerprint,
-			"scroll_strategy":        cfg.ScrollStrategy,
-			"send_scroll_event":      cfg.SendScrollEvent,
-			"use_sitemap":            cfg.UseSitemap,
+			"target_domain":           cfg.TargetDomain,
+			"max_pages":               cfg.MaxPages,
+			"duration_minutes":        cfg.DurationMinutes,
+			"hits_per_minute":         cfg.HitsPerMinute,
+			"max_concurrent_visits":   cfg.MaxConcurrentVisits,
+			"output_dir":              cfg.OutputDir,
+			"export_format":           cfg.ExportFormat,
+			"canvas_fingerprint":      cfg.CanvasFingerprint,
+			"scroll_strategy":         cfg.ScrollStrategy,
+			"send_scroll_event":       cfg.SendScrollEvent,
+			"use_sitemap":             cfg.UseSitemap,
 			"sitemap_homepage_weight": cfg.SitemapHomepageWeight,
-			"keywords":               cfg.Keywords,
-			"proxy_host":             cfg.ProxyHost,
-			"proxy_port":             cfg.ProxyPort,
-			"proxy_user":             maskCredential(cfg.ProxyUser),
-			"proxy_pass":             maskCredential(cfg.ProxyPass),
-			"gtag_id":                cfg.GtagID,
-			"use_public_proxy":       cfg.UsePublicProxy,
-			"proxy_source_urls":      cfg.ProxySourceURLs,
-			"github_repos":           cfg.GitHubRepos,
-			"checker_workers":        cfg.CheckerWorkers,
+			"keywords":                cfg.Keywords,
+			"proxy_host":              cfg.ProxyHost,
+			"proxy_port":              cfg.ProxyPort,
+			"proxy_user":              maskCredential(cfg.ProxyUser),
+			"proxy_pass":              maskCredential(cfg.ProxyPass),
+			"gtag_id":                 cfg.GtagID,
+			"use_public_proxy":        cfg.UsePublicProxy,
+			"proxy_source_urls":       cfg.ProxySourceURLs,
+			"github_repos":            cfg.GitHubRepos,
+			"checker_workers":         cfg.CheckerWorkers,
 			// Private proxy alanları
-			"private_proxies":        privateProxiesAPI,
-			"use_private_proxy":      cfg.UsePrivateProxy,
+			"private_proxies":   privateProxiesAPI,
+			"use_private_proxy": cfg.UsePrivateProxy,
+			// Proxy list (textarea geri yüklemesi için)
+			"use_proxy":  cfg.UseProxy,
+			"proxy_list": buildProxyListText(cfg.PrivateProxies),
 			// Device & Referrer
-			"device_type":            cfg.DeviceType,
-			"device_brands":          cfg.DeviceBrands,
-			"referrer_keyword":       cfg.ReferrerKeyword,
-			"referrer_enabled":       cfg.ReferrerEnabled,
-			"referrer_source":        cfg.ReferrerSource,
+			"device_type":      cfg.DeviceType,
+			"device_brands":    cfg.DeviceBrands,
+			"referrer_keyword": cfg.ReferrerKeyword,
+			"referrer_enabled": cfg.ReferrerEnabled,
+			"referrer_source":  cfg.ReferrerSource,
 			// Traffic Simulation
-			"min_page_duration":      cfg.MinPageDuration,
-			"max_page_duration":      cfg.MaxPageDuration,
-			"min_scroll_percent":     cfg.MinScrollPercent,
-			"max_scroll_percent":     cfg.MaxScrollPercent,
-			"click_probability":      cfg.ClickProbability,
+			"min_page_duration":  cfg.MinPageDuration,
+			"max_page_duration":  cfg.MaxPageDuration,
+			"min_scroll_percent": cfg.MinScrollPercent,
+			"max_scroll_percent": cfg.MaxScrollPercent,
+			"click_probability":  cfg.ClickProbability,
 			// Session Depth
-			"session_min_pages":      cfg.SessionMinPages,
-			"session_max_pages":      cfg.SessionMaxPages,
-			"enable_session_depth":   cfg.EnableSessionDepth,
+			"session_min_pages":    cfg.SessionMinPages,
+			"session_max_pages":    cfg.SessionMaxPages,
+			"enable_session_depth": cfg.EnableSessionDepth,
 			// Bounce Rate
-			"target_bounce_rate":     cfg.TargetBounceRate,
-			"enable_bounce_control":  cfg.EnableBounceControl,
+			"target_bounce_rate":    cfg.TargetBounceRate,
+			"enable_bounce_control": cfg.EnableBounceControl,
 			// Behavior Simulation
-			"simulate_mouse_move":    cfg.SimulateMouseMove,
-			"simulate_keyboard":      cfg.SimulateKeyboard,
-			"simulate_clicks":        cfg.SimulateClicks,
-			"simulate_focus":         cfg.SimulateFocus,
+			"simulate_mouse_move": cfg.SimulateMouseMove,
+			"simulate_keyboard":   cfg.SimulateKeyboard,
+			"simulate_clicks":     cfg.SimulateClicks,
+			"simulate_focus":      cfg.SimulateFocus,
 			// Geo Location
-			"geo_country":            cfg.GeoCountry,
-			"geo_timezone":           cfg.GeoTimezone,
-			"geo_language":           cfg.GeoLanguage,
+			"geo_country":  cfg.GeoCountry,
+			"geo_timezone": cfg.GeoTimezone,
+			"geo_language": cfg.GeoLanguage,
 			// Analytics Events
-			"send_page_view":         cfg.SendPageView,
-			"send_session_start":     cfg.SendSessionStart,
-			"send_user_engagement":   cfg.SendUserEngagement,
-			"send_first_visit":       cfg.SendFirstVisit,
+			"send_page_view":       cfg.SendPageView,
+			"send_session_start":   cfg.SendSessionStart,
+			"send_user_engagement": cfg.SendUserEngagement,
+			"send_first_visit":     cfg.SendFirstVisit,
 			// Custom Dimensions
-			"custom_dimensions":      cfg.CustomDimensions,
-			"custom_metrics":         cfg.CustomMetrics,
+			"custom_dimensions":        cfg.CustomDimensions,
+			"custom_metrics":           cfg.CustomMetrics,
 			"enable_custom_dimensions": cfg.EnableCustomDimensions,
 			// GSC Integration
 			"gsc_property_url":       cfg.GscPropertyUrl,
 			"enable_gsc_integration": cfg.EnableGscIntegration,
 			"use_gsc_queries":        cfg.UseGscQueries,
 			// Returning Visitor
-			"returning_visitor_rate": cfg.ReturningVisitorRate,
-			"returning_visitor_days": cfg.ReturningVisitorDays,
+			"returning_visitor_rate":   cfg.ReturningVisitorRate,
+			"returning_visitor_days":   cfg.ReturningVisitorDays,
 			"enable_returning_visitor": cfg.EnableReturningVisitor,
 			// Exit Page
-			"exit_pages":             cfg.ExitPages,
+			"exit_pages":               cfg.ExitPages,
 			"enable_exit_page_control": cfg.EnableExitPageControl,
 			// Browser Profile
 			"browser_profile_path":   cfg.BrowserProfilePath,
@@ -708,46 +719,46 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"persist_cookies":        cfg.PersistCookies,
 			"persist_local_storage":  cfg.PersistLocalStorage,
 			// TLS Fingerprint
-			"tls_fingerprint_mode":   cfg.TlsFingerprintMode,
+			"tls_fingerprint_mode":     cfg.TlsFingerprintMode,
 			"enable_ja3_randomization": cfg.EnableJa3Randomization,
 			"enable_ja4_randomization": cfg.EnableJa4Randomization,
 			// Proxy Rotation
-			"proxy_rotation_mode":    cfg.ProxyRotationMode,
+			"proxy_rotation_mode":     cfg.ProxyRotationMode,
 			"proxy_rotation_interval": cfg.ProxyRotationInterval,
-			"enable_proxy_rotation":  cfg.EnableProxyRotation,
+			"enable_proxy_rotation":   cfg.EnableProxyRotation,
 			// HTTP/2 Fingerprint
-			"http2_fingerprint_mode": cfg.Http2FingerprintMode,
+			"http2_fingerprint_mode":   cfg.Http2FingerprintMode,
 			"enable_http2_fingerprint": cfg.EnableHttp2Fingerprint,
 			"enable_http3_fingerprint": cfg.EnableHttp3Fingerprint,
 			// Client Hints
-			"enable_client_hints":    cfg.EnableClientHints,
-			"spoof_sec_ch_ua":        cfg.SpoofSecChUa,
+			"enable_client_hints":      cfg.EnableClientHints,
+			"spoof_sec_ch_ua":          cfg.SpoofSecChUa,
 			"spoof_sec_ch_ua_platform": cfg.SpoofSecChUaPlatform,
-			"spoof_sec_ch_ua_arch":   cfg.SpoofSecChUaArch,
+			"spoof_sec_ch_ua_arch":     cfg.SpoofSecChUaArch,
 			// Headless Bypass
-			"bypass_puppeteer":       cfg.BypassPuppeteer,
-			"bypass_playwright":      cfg.BypassPlaywright,
-			"bypass_selenium":        cfg.BypassSelenium,
-			"bypass_cdp":             cfg.BypassCDP,
+			"bypass_puppeteer":           cfg.BypassPuppeteer,
+			"bypass_playwright":          cfg.BypassPlaywright,
+			"bypass_selenium":            cfg.BypassSelenium,
+			"bypass_cdp":                 cfg.BypassCDP,
 			"bypass_rendering_detection": cfg.BypassRenderingDetection,
-			"bypass_webdriver":       cfg.BypassWebdriver,
+			"bypass_webdriver":           cfg.BypassWebdriver,
 			// SERP
-			"serp_search_engine":     cfg.SerpSearchEngine,
-			"enable_serp_simulation": cfg.EnableSerpSimulation,
+			"serp_search_engine":       cfg.SerpSearchEngine,
+			"enable_serp_simulation":   cfg.EnableSerpSimulation,
 			"serp_scroll_before_click": cfg.SerpScrollBeforeClick,
 			// Browser Pool
-			"browser_pool_min":       cfg.BrowserPoolMin,
-			"browser_pool_max":       cfg.BrowserPoolMax,
-			"enable_auto_scaling":    cfg.EnableAutoScaling,
-			"worker_queue_size":      cfg.WorkerQueueSize,
-			"enable_priority_queue":  cfg.EnablePriorityQueue,
+			"browser_pool_min":        cfg.BrowserPoolMin,
+			"browser_pool_max":        cfg.BrowserPoolMax,
+			"enable_auto_scaling":     cfg.EnableAutoScaling,
+			"worker_queue_size":       cfg.WorkerQueueSize,
+			"enable_priority_queue":   cfg.EnablePriorityQueue,
 			"enable_failure_recovery": cfg.EnableFailureRecovery,
 			// Mobile Emulation
-			"ios_device_model":       cfg.IosDeviceModel,
-			"enable_ios_safari":      cfg.EnableIosSafari,
-			"enable_ios_haptics":     cfg.EnableIosHaptics,
-			"android_device_model":   cfg.AndroidDeviceModel,
-			"enable_android_chrome":  cfg.EnableAndroidChrome,
+			"ios_device_model":         cfg.IosDeviceModel,
+			"enable_ios_safari":        cfg.EnableIosSafari,
+			"enable_ios_haptics":       cfg.EnableIosHaptics,
+			"android_device_model":     cfg.AndroidDeviceModel,
+			"enable_android_chrome":    cfg.EnableAndroidChrome,
 			"enable_android_vibration": cfg.EnableAndroidVibration,
 			// Touch Events
 			"enable_touch_events":    cfg.EnableTouchEvents,
@@ -755,35 +766,35 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"enable_gestures":        cfg.EnableGestures,
 			"enable_mobile_keyboard": cfg.EnableMobileKeyboard,
 			// Sensors
-			"enable_accelerometer":   cfg.EnableAccelerometer,
-			"enable_gyroscope":       cfg.EnableGyroscope,
+			"enable_accelerometer":      cfg.EnableAccelerometer,
+			"enable_gyroscope":          cfg.EnableGyroscope,
 			"enable_device_orientation": cfg.EnableDeviceOrientation,
-			"enable_magnetometer":    cfg.EnableMagnetometer,
+			"enable_magnetometer":       cfg.EnableMagnetometer,
 			// Tablet
-			"enable_tablet_mode":     cfg.EnableTabletMode,
-			"enable_landscape_mode":  cfg.EnableLandscapeMode,
-			"enable_pen_input":       cfg.EnablePenInput,
-			"enable_split_view":      cfg.EnableSplitView,
+			"enable_tablet_mode":    cfg.EnableTabletMode,
+			"enable_landscape_mode": cfg.EnableLandscapeMode,
+			"enable_pen_input":      cfg.EnablePenInput,
+			"enable_split_view":     cfg.EnableSplitView,
 			// Stealth
-			"stealth_webdriver":      cfg.StealthWebdriver,
-			"stealth_chrome":         cfg.StealthChrome,
-			"stealth_plugins":        cfg.StealthPlugins,
-			"stealth_webgl":          cfg.StealthWebGL,
-			"stealth_audio":          cfg.StealthAudio,
-			"stealth_canvas":         cfg.StealthCanvas,
-			"stealth_timezone":       cfg.StealthTimezone,
-			"stealth_language":       cfg.StealthLanguage,
+			"stealth_webdriver": cfg.StealthWebdriver,
+			"stealth_chrome":    cfg.StealthChrome,
+			"stealth_plugins":   cfg.StealthPlugins,
+			"stealth_webgl":     cfg.StealthWebGL,
+			"stealth_audio":     cfg.StealthAudio,
+			"stealth_canvas":    cfg.StealthCanvas,
+			"stealth_timezone":  cfg.StealthTimezone,
+			"stealth_language":  cfg.StealthLanguage,
 			// Performance
-			"visit_timeout":          cfg.VisitTimeout,
-			"page_load_wait":         cfg.PageLoadWait,
-			"retry_count":            cfg.RetryCount,
+			"visit_timeout":  cfg.VisitTimeout,
+			"page_load_wait": cfg.PageLoadWait,
+			"retry_count":    cfg.RetryCount,
 			// Resource Blocking
-			"block_images":           cfg.BlockImages,
-			"block_styles":           cfg.BlockStyles,
-			"block_fonts":            cfg.BlockFonts,
-			"block_media":            cfg.BlockMedia,
+			"block_images": cfg.BlockImages,
+			"block_styles": cfg.BlockStyles,
+			"block_fonts":  cfg.BlockFonts,
+			"block_media":  cfg.BlockMedia,
 			// Anti-Detect Mode
-			"anti_detect_mode":       cfg.AntiDetectMode,
+			"anti_detect_mode": cfg.AntiDetectMode,
 		})
 		return
 	}
@@ -805,99 +816,99 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			Keywords              []string `json:"keywords"`
 			GtagID                string   `json:"gtag_id"`
 			AntiDetectMode        bool     `json:"anti_detect_mode"`
-			
+
 			// Device & Traffic
-			DeviceType        string   `json:"device_type"`
-			DeviceBrands      []string `json:"device_brands"`
-			MinPageDuration   int      `json:"min_page_duration"`
-			MaxPageDuration   int      `json:"max_page_duration"`
-			
+			DeviceType      string   `json:"device_type"`
+			DeviceBrands    []string `json:"device_brands"`
+			MinPageDuration int      `json:"min_page_duration"`
+			MaxPageDuration int      `json:"max_page_duration"`
+
 			// Session & Bounce
-			EnableSessionDepth   bool `json:"enable_session_depth"`
-			SessionMinPages      int  `json:"session_min_pages"`
-			SessionMaxPages      int  `json:"session_max_pages"`
-			EnableBounceControl  bool `json:"enable_bounce_control"`
-			TargetBounceRate     int  `json:"target_bounce_rate"`
-			
+			EnableSessionDepth  bool `json:"enable_session_depth"`
+			SessionMinPages     int  `json:"session_min_pages"`
+			SessionMaxPages     int  `json:"session_max_pages"`
+			EnableBounceControl bool `json:"enable_bounce_control"`
+			TargetBounceRate    int  `json:"target_bounce_rate"`
+
 			// Behavior Simulation
-			SimulateMouseMove   bool `json:"simulate_mouse_move"`
-			SimulateKeyboard    bool `json:"simulate_keyboard"`
-			SimulateClicks      bool `json:"simulate_clicks"`
-			SimulateFocus       bool `json:"simulate_focus"`
-			
+			SimulateMouseMove bool `json:"simulate_mouse_move"`
+			SimulateKeyboard  bool `json:"simulate_keyboard"`
+			SimulateClicks    bool `json:"simulate_clicks"`
+			SimulateFocus     bool `json:"simulate_focus"`
+
 			// Referrer
-			ReferrerEnabled   bool   `json:"referrer_enabled"`
-			ReferrerSource    string `json:"referrer_source"`
-			ReferrerKeyword   string `json:"referrer_keyword"`
-			
+			ReferrerEnabled bool   `json:"referrer_enabled"`
+			ReferrerSource  string `json:"referrer_source"`
+			ReferrerKeyword string `json:"referrer_keyword"`
+
 			// Geo
-			GeoCountry   string `json:"geo_country"`
-			GeoLanguage  string `json:"geo_language"`
-			GeoTimezone  string `json:"geo_timezone"`
-			
+			GeoCountry  string `json:"geo_country"`
+			GeoLanguage string `json:"geo_language"`
+			GeoTimezone string `json:"geo_timezone"`
+
 			// Analytics Events
-			SendPageView        bool `json:"send_page_view"`
-			SendSessionStart    bool `json:"send_session_start"`
-			SendUserEngagement  bool `json:"send_user_engagement"`
-			SendFirstVisit      bool `json:"send_first_visit"`
-			
+			SendPageView       bool `json:"send_page_view"`
+			SendSessionStart   bool `json:"send_session_start"`
+			SendUserEngagement bool `json:"send_user_engagement"`
+			SendFirstVisit     bool `json:"send_first_visit"`
+
 			// GSC
-			EnableGscIntegration  bool   `json:"enable_gsc_integration"`
-			UseGscQueries         bool   `json:"use_gsc_queries"`
-			GscPropertyUrl        string `json:"gsc_property_url"`
-			GscApiKey             string `json:"gsc_api_key"`
-			
+			EnableGscIntegration bool   `json:"enable_gsc_integration"`
+			UseGscQueries        bool   `json:"use_gsc_queries"`
+			GscPropertyUrl       string `json:"gsc_property_url"`
+			GscApiKey            string `json:"gsc_api_key"`
+
 			// Browser Profile
-			EnableBrowserProfile  bool   `json:"enable_browser_profile"`
-			BrowserProfilePath    string `json:"browser_profile_path"`
-			MaxBrowserProfiles    int    `json:"max_browser_profiles"`
-			PersistCookies        bool   `json:"persist_cookies"`
-			PersistLocalStorage   bool   `json:"persist_local_storage"`
-			
+			EnableBrowserProfile bool   `json:"enable_browser_profile"`
+			BrowserProfilePath   string `json:"browser_profile_path"`
+			MaxBrowserProfiles   int    `json:"max_browser_profiles"`
+			PersistCookies       bool   `json:"persist_cookies"`
+			PersistLocalStorage  bool   `json:"persist_local_storage"`
+
 			// Returning Visitor
-			EnableReturningVisitor  bool `json:"enable_returning_visitor"`
-			ReturningVisitorRate    int  `json:"returning_visitor_rate"`
-			ReturningVisitorDays    int  `json:"returning_visitor_days"`
-			
+			EnableReturningVisitor bool `json:"enable_returning_visitor"`
+			ReturningVisitorRate   int  `json:"returning_visitor_rate"`
+			ReturningVisitorDays   int  `json:"returning_visitor_days"`
+
 			// Network
-			EnableHTTP3           bool `json:"enable_http3"`
-			EnableConnectionPool  bool `json:"enable_connection_pool"`
-			EnableTCPFastOpen     bool `json:"enable_tcp_fast_open"`
-			MaxIdleConns          int  `json:"max_idle_conns"`
-			MaxConnsPerHost       int  `json:"max_conns_per_host"`
-			
+			EnableHTTP3          bool `json:"enable_http3"`
+			EnableConnectionPool bool `json:"enable_connection_pool"`
+			EnableTCPFastOpen    bool `json:"enable_tcp_fast_open"`
+			MaxIdleConns         int  `json:"max_idle_conns"`
+			MaxConnsPerHost      int  `json:"max_conns_per_host"`
+
 			// System
-			EnableCPUAffinity  bool `json:"enable_cpu_affinity"`
-			EnableNUMA         bool `json:"enable_numa"`
-			
+			EnableCPUAffinity bool `json:"enable_cpu_affinity"`
+			EnableNUMA        bool `json:"enable_numa"`
+
 			// VM Spoofing
-			EnableVMSpoofing    bool   `json:"enable_vm_spoofing"`
-			HideVMIndicators    bool   `json:"hide_vm_indicators"`
-			SpoofHardwareIDs    bool   `json:"spoof_hardware_ids"`
-			RandomizeVMParams   bool   `json:"randomize_vm_params"`
-			VMType              string `json:"vm_type"`
-			
+			EnableVMSpoofing  bool   `json:"enable_vm_spoofing"`
+			HideVMIndicators  bool   `json:"hide_vm_indicators"`
+			SpoofHardwareIDs  bool   `json:"spoof_hardware_ids"`
+			RandomizeVMParams bool   `json:"randomize_vm_params"`
+			VMType            string `json:"vm_type"`
+
 			// Proxy
-			UseProxy       bool   `json:"use_proxy"`
-			ProxyHost      string `json:"proxy_host"`
-			ProxyPort      int    `json:"proxy_port"`
-			ProxyUser      string `json:"proxy_user"`
-			ProxyPass      string `json:"proxy_pass"`
-			UsePublicProxy bool   `json:"use_public_proxy"`
+			UseProxy        bool     `json:"use_proxy"`
+			ProxyHost       string   `json:"proxy_host"`
+			ProxyPort       int      `json:"proxy_port"`
+			ProxyUser       string   `json:"proxy_user"`
+			ProxyPass       string   `json:"proxy_pass"`
+			UsePublicProxy  bool     `json:"use_public_proxy"`
 			ProxySourceURLs []string `json:"proxy_source_urls"`
 			GitHubRepos     []string `json:"github_repos"`
 			CheckerWorkers  int      `json:"checker_workers"`
-			
+
 			// Private proxy
-			UsePrivateProxy   bool     `json:"use_private_proxy"`
-			PrivateProxies    []struct {
+			UsePrivateProxy bool `json:"use_private_proxy"`
+			PrivateProxies  []struct {
 				Host     string `json:"host"`
 				Port     int    `json:"port"`
 				User     string `json:"user"`
 				Pass     string `json:"pass"`
 				Protocol string `json:"protocol"`
 			} `json:"private_proxies"`
-			
+
 			// Proxy List (textarea'dan gelen)
 			ProxyList string `json:"proxy_list"`
 		}
@@ -908,6 +919,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mu.Lock()
+		// BUG FIX: GET yanıtında proxy kimlik bilgileri maskeli döner ("kul********").
+		// Kullanıcı bu alanları değiştirmeden Kaydet'e basarsa maskeli değer gerçek
+		// kimlik bilgisinin üzerine yazılıyordu. Maskeli değer gelirse mevcutı koru.
+		if strings.Contains(body.ProxyUser, "***") {
+			body.ProxyUser = s.cfg.ProxyUser
+		}
+		if strings.Contains(body.ProxyPass, "***") {
+			body.ProxyPass = s.cfg.ProxyPass
+		}
 		// Basic Settings
 		s.cfg.TargetDomain = body.TargetDomain
 		s.cfg.MaxPages = body.MaxPages
@@ -924,78 +944,78 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Keywords = body.Keywords
 		s.cfg.GtagID = body.GtagID
 		s.cfg.AntiDetectMode = body.AntiDetectMode
-		
+
 		// Device & Traffic
 		s.cfg.DeviceType = body.DeviceType
 		s.cfg.DeviceBrands = body.DeviceBrands
 		s.cfg.MinPageDuration = body.MinPageDuration
 		s.cfg.MaxPageDuration = body.MaxPageDuration
-		
+
 		// Session & Bounce
 		s.cfg.EnableSessionDepth = body.EnableSessionDepth
 		s.cfg.SessionMinPages = body.SessionMinPages
 		s.cfg.SessionMaxPages = body.SessionMaxPages
 		s.cfg.EnableBounceControl = body.EnableBounceControl
 		s.cfg.TargetBounceRate = body.TargetBounceRate
-		
+
 		// Behavior Simulation
 		s.cfg.SimulateMouseMove = body.SimulateMouseMove
 		s.cfg.SimulateKeyboard = body.SimulateKeyboard
 		s.cfg.SimulateClicks = body.SimulateClicks
 		s.cfg.SimulateFocus = body.SimulateFocus
-		
+
 		// Referrer
 		s.cfg.ReferrerEnabled = body.ReferrerEnabled
 		s.cfg.ReferrerSource = body.ReferrerSource
 		s.cfg.ReferrerKeyword = body.ReferrerKeyword
-		
+
 		// Geo
 		s.cfg.GeoCountry = body.GeoCountry
 		s.cfg.GeoLanguage = body.GeoLanguage
 		s.cfg.GeoTimezone = body.GeoTimezone
-		
+
 		// Analytics Events
 		s.cfg.SendPageView = body.SendPageView
 		s.cfg.SendSessionStart = body.SendSessionStart
 		s.cfg.SendUserEngagement = body.SendUserEngagement
 		s.cfg.SendFirstVisit = body.SendFirstVisit
-		
+
 		// GSC
 		s.cfg.EnableGscIntegration = body.EnableGscIntegration
 		s.cfg.UseGscQueries = body.UseGscQueries
 		s.cfg.GscPropertyUrl = body.GscPropertyUrl
 		s.cfg.GscApiKey = body.GscApiKey
-		
+
 		// Browser Profile
 		s.cfg.EnableBrowserProfile = body.EnableBrowserProfile
 		s.cfg.BrowserProfilePath = body.BrowserProfilePath
 		s.cfg.MaxBrowserProfiles = body.MaxBrowserProfiles
 		s.cfg.PersistCookies = body.PersistCookies
 		s.cfg.PersistLocalStorage = body.PersistLocalStorage
-		
+
 		// Returning Visitor
 		s.cfg.EnableReturningVisitor = body.EnableReturningVisitor
 		s.cfg.ReturningVisitorRate = body.ReturningVisitorRate
 		s.cfg.ReturningVisitorDays = body.ReturningVisitorDays
-		
+
 		// Network
 		s.cfg.EnableHTTP3 = body.EnableHTTP3
 		s.cfg.EnableConnectionPool = body.EnableConnectionPool
 		s.cfg.EnableTCPFastOpen = body.EnableTCPFastOpen
 		s.cfg.MaxIdleConns = body.MaxIdleConns
 		s.cfg.MaxConnsPerHost = body.MaxConnsPerHost
-		
+
 		// System
 		s.cfg.EnableCPUAffinity = body.EnableCPUAffinity
 		s.cfg.EnableNUMA = body.EnableNUMA
-		
+
 		// VM Spoofing
 		s.cfg.EnableVMSpoofing = body.EnableVMSpoofing
 		s.cfg.HideVMIndicators = body.HideVMIndicators
 		s.cfg.SpoofHardwareIDs = body.SpoofHardwareIDs
 		s.cfg.RandomizeVMParams = body.RandomizeVMParams
 		s.cfg.VMType = body.VMType
-		
+
 		// Proxy
 		s.cfg.UseProxy = body.UseProxy
 		s.cfg.ProxyHost = body.ProxyHost
@@ -1010,7 +1030,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if body.CheckerWorkers > 0 {
 			s.cfg.CheckerWorkers = body.CheckerWorkers
 		}
-		
+
 		// Private proxy'leri config'e kaydet
 		s.cfg.UsePrivateProxy = body.UsePrivateProxy
 		s.cfg.PrivateProxies = nil // Önce temizle
@@ -1029,12 +1049,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
-		
+
 		// Private proxy varsa UsePrivateProxy'yi otomatik aktifleştir
 		if len(s.cfg.PrivateProxies) > 0 {
 			s.cfg.UsePrivateProxy = true
 		}
-		
+
 		// Proxy List parsing (textarea'dan gelen)
 		if body.ProxyList != "" {
 			// Satır satır parse et ve private_proxies'e ekle
@@ -1044,14 +1064,14 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				if line == "" {
 					continue
 				}
-				
+
 				// Parse proxy URL: protocol://[user:pass@]host:port
 				proxyURL, err := url.Parse(line)
 				if err != nil {
 					log.Printf("[WARN] Invalid proxy URL skipped: %s - %v", line, err)
 					continue
 				}
-				
+
 				host := proxyURL.Hostname()
 				portStr := proxyURL.Port()
 				port := 0
@@ -1060,17 +1080,17 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 						port = p
 					}
 				}
-				
+
 				if host == "" || port == 0 {
 					log.Printf("[WARN] Proxy missing host or port, skipped: %s", line)
 					continue
 				}
-				
+
 				protocol := proxyURL.Scheme
 				if protocol == "" {
 					protocol = "http"
 				}
-				
+
 				user := ""
 				pass := ""
 				if proxyURL.User != nil {
@@ -1079,7 +1099,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 						pass = p
 					}
 				}
-				
+
 				s.cfg.PrivateProxies = append(s.cfg.PrivateProxies, config.PrivateProxy{
 					Host:     host,
 					Port:     port,
@@ -1087,10 +1107,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 					Pass:     pass,
 					Protocol: protocol,
 				})
-				
+
 				log.Printf("[INFO] Added proxy: %s://%s:%d", protocol, host, port)
 			}
-			
+
 			// Proxy varsa UsePrivateProxy ve UseProxy'yi aktifleştir
 			if len(s.cfg.PrivateProxies) > 0 {
 				s.cfg.UsePrivateProxy = true
@@ -1098,7 +1118,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				s.cfg.ProxyEnabled = true
 			}
 		}
-		
+
 		s.cfg.ApplyDefaults()
 		s.cfg.ComputeDerived()
 		// BUG FIX #3: Config kopyasını al - lock dışında save yapmak için
@@ -1144,7 +1164,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	rep := reporter.NewWithLocale(s.cfg.OutputDir, s.cfg.ExportFormat, s.cfg.TargetDomain, locale)
 	var livePool *proxy.LivePool
-	
+
 	// Private proxy modu: kullanıcının kendi proxy'lerini LivePool'a ekle
 	if s.cfg.UsePrivateProxy && len(s.cfg.PrivateProxies) > 0 {
 		// Yeni LivePool oluştur ve private proxy'leri ekle
@@ -1170,7 +1190,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		// Public proxy modu
 		livePool = s.proxyService.LivePool
 	}
-	
+
 	sim, err := simulator.New(s.cfg, s.agentLoader, rep, livePool)
 	if err != nil {
 		s.mu.Unlock()
@@ -1178,16 +1198,16 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sim = sim
-	
+
 	// SECURITY FIX: Her hit için anlık server bildirimi - callback set et
 	rep.SetHitCallback(func(url string, duration time.Duration, success bool, proxy string) {
 		// Metrics collector'a kaydet
 		s.RecordHit(url, proxy, duration, success)
-		
+
 		// Anlık WebSocket broadcast - status güncellemesi
 		s.hub.Broadcast("status", s.buildStatusMap())
 	})
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	logChan := sim.Reporter().LogChan()
@@ -1249,10 +1269,10 @@ func (s *Server) buildStatusMap() map[string]interface{} {
 		"max_response_ms": repMetrics.MaxResponseTime,
 		// Prometheus metrics - dashboard için ana kaynak
 		"metrics": map[string]interface{}{
-			"total_hits":      metricsSnapshot.TotalHits,
-			"success_count":   metricsSnapshot.SuccessCount,
-			"error_count":     metricsSnapshot.ErrorCount,
-			"bounce_count":    metricsSnapshot.BounceCount,
+			"total_hits":       metricsSnapshot.TotalHits,
+			"success_count":    metricsSnapshot.SuccessCount,
+			"error_count":      metricsSnapshot.ErrorCount,
+			"bounce_count":     metricsSnapshot.BounceCount,
 			"hit_rate_per_min": metricsSnapshot.HitRatePerMin,
 			"success_rate":     metricsSnapshot.SuccessRate,
 			"bounce_rate":      metricsSnapshot.BounceRate,
@@ -1269,12 +1289,12 @@ func (s *Server) buildStatusMap() map[string]interface{} {
 	if ps != nil {
 		st := ps.Status()
 		out["proxy_status"] = map[string]interface{}{
-			"queue_count":    st.QueueCount,
-			"live_count":     st.LiveCount,
-			"checking":       st.Checking,
-			"checked_done":   st.CheckedDone,
-			"added_total":    st.AddedTotal,
-			"removed_total":  st.RemovedTotal,
+			"queue_count":   st.QueueCount,
+			"live_count":    st.LiveCount,
+			"checking":      st.Checking,
+			"checked_done":  st.CheckedDone,
+			"added_total":   st.AddedTotal,
+			"removed_total": st.RemovedTotal,
 		}
 		out["proxy_live"] = ps.LivePool.SnapshotForAPI()
 	}
@@ -1487,7 +1507,7 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", 405)
 		return
 	}
-	
+
 	var body struct {
 		Host string `json:"host"`
 		Port int    `json:"port"`
@@ -1498,7 +1518,7 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", 400)
 		return
 	}
-	
+
 	if body.Host == "" || body.Port == 0 {
 		http.Error(w, "Host and port required", 400)
 		return
@@ -1528,7 +1548,7 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 	if body.User != "" {
 		proxyURL = fmt.Sprintf("http://%s:%s@%s:%d", body.User, body.Pass, body.Host, body.Port)
 	}
-	
+
 	// Test için httpbin.org'a istek at
 	client := &http.Client{
 		Timeout: 10 * time.Second,
@@ -1538,7 +1558,7 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
-	
+
 	resp, err := client.Get("http://httpbin.org/ip")
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -1549,7 +1569,7 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":     resp.StatusCode == 200,
@@ -1562,7 +1582,7 @@ func (s *Server) handleGSCQueries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", 405)
 		return
 	}
-	
+
 	var body struct {
 		PropertyURL string `json:"property_url"`
 		APIKey      string `json:"api_key"`
@@ -1572,30 +1592,30 @@ func (s *Server) handleGSCQueries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", 400)
 		return
 	}
-	
+
 	if body.PropertyURL == "" {
 		http.Error(w, "Property URL required", 400)
 		return
 	}
-	
+
 	// Property URL'yi normalize et
 	// Kullanıcı sadece domain girerse (örn: eros.sh), otomatik olarak sc-domain: formatına çevir
 	propertyURL := strings.TrimSpace(body.PropertyURL)
 	propertyURL = strings.TrimSuffix(propertyURL, "/")
-	
+
 	// Eğer http:// veya https:// ile başlamıyorsa ve sc-domain: değilse
 	if !strings.HasPrefix(propertyURL, "http://") &&
-	   !strings.HasPrefix(propertyURL, "https://") &&
-	   !strings.HasPrefix(propertyURL, "sc-domain:") {
+		!strings.HasPrefix(propertyURL, "https://") &&
+		!strings.HasPrefix(propertyURL, "sc-domain:") {
 		// Domain property olarak ayarla (en yaygın format)
 		propertyURL = "sc-domain:" + propertyURL
 	}
-	
+
 	if body.APIKey == "" {
 		http.Error(w, "API Key (Service Account JSON) required", 400)
 		return
 	}
-	
+
 	// Service Account JSON'ı parse et
 	var serviceAccount struct {
 		Type                    string `json:"type"`
@@ -1609,7 +1629,7 @@ func (s *Server) handleGSCQueries(w http.ResponseWriter, r *http.Request) {
 		AuthProviderX509CertURL string `json:"auth_provider_x509_cert_url"`
 		ClientX509CertURL       string `json:"client_x509_cert_url"`
 	}
-	
+
 	if err := json.Unmarshal([]byte(body.APIKey), &serviceAccount); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1618,7 +1638,7 @@ func (s *Server) handleGSCQueries(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	
+
 	if serviceAccount.Type != "service_account" {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1627,7 +1647,7 @@ func (s *Server) handleGSCQueries(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	
+
 	if serviceAccount.PrivateKey == "" || serviceAccount.ClientEmail == "" {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1636,13 +1656,13 @@ func (s *Server) handleGSCQueries(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	
+
 	// GSC API çağrısı yap
 	days := body.Days
 	if days <= 0 {
 		days = 28 // Varsayılan 28 gün
 	}
-	
+
 	queries, err := fetchGSCQueries(propertyURL, serviceAccount.ClientEmail, serviceAccount.PrivateKey, days)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -1652,7 +1672,7 @@ func (s *Server) handleGSCQueries(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -1667,50 +1687,50 @@ func fetchGSCQueries(propertyURL, clientEmail, privateKey string, days int) ([]m
 	if err != nil {
 		return nil, fmt.Errorf("JWT oluşturma hatası: %w", err)
 	}
-	
+
 	// Access token al
 	accessToken, err := exchangeJWTForAccessToken(token)
 	if err != nil {
 		return nil, fmt.Errorf("Access token alma hatası: %w", err)
 	}
-	
+
 	// GSC API'ye istek at
 	endDate := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
-	
+
 	requestBody := map[string]interface{}{
 		"startDate":  startDate,
 		"endDate":    endDate,
 		"dimensions": []string{"query"},
 		"rowLimit":   100,
 	}
-	
+
 	jsonBody, _ := json.Marshal(requestBody)
-	
+
 	// Property URL'yi encode et
 	encodedProperty := url.QueryEscape(propertyURL)
 	apiURL := fmt.Sprintf("https://www.googleapis.com/webmasters/v3/sites/%s/searchAnalytics/query", encodedProperty)
-	
+
 	req, err := http.NewRequest("POST", apiURL, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return nil, err
 	}
-	
+
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("GSC API hatası (%d): %s", resp.StatusCode, string(bodyBytes))
 	}
-	
+
 	var gscResponse struct {
 		Rows []struct {
 			Keys        []string `json:"keys"`
@@ -1720,11 +1740,11 @@ func fetchGSCQueries(propertyURL, clientEmail, privateKey string, days int) ([]m
 			Position    float64  `json:"position"`
 		} `json:"rows"`
 	}
-	
+
 	if err := json.NewDecoder(resp.Body).Decode(&gscResponse); err != nil {
 		return nil, fmt.Errorf("GSC yanıt parse hatası: %w", err)
 	}
-	
+
 	queries := make([]map[string]interface{}, 0, len(gscResponse.Rows))
 	for _, row := range gscResponse.Rows {
 		if len(row.Keys) > 0 {
@@ -1737,7 +1757,7 @@ func fetchGSCQueries(propertyURL, clientEmail, privateKey string, days int) ([]m
 			})
 		}
 	}
-	
+
 	return queries, nil
 }
 
@@ -1750,7 +1770,7 @@ func createGSCJWT(clientEmail, privateKey string) (string, error) {
 	}
 	headerJSON, _ := json.Marshal(header)
 	headerB64 := base64URLEncode(headerJSON)
-	
+
 	// JWT Claims
 	now := time.Now().Unix()
 	claims := map[string]interface{}{
@@ -1762,14 +1782,14 @@ func createGSCJWT(clientEmail, privateKey string) (string, error) {
 	}
 	claimsJSON, _ := json.Marshal(claims)
 	claimsB64 := base64URLEncode(claimsJSON)
-	
+
 	// Signature
 	signatureInput := headerB64 + "." + claimsB64
 	signature, err := signRS256(signatureInput, privateKey)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return signatureInput + "." + signature, nil
 }
 
@@ -1778,28 +1798,28 @@ func exchangeJWTForAccessToken(jwt string) (string, error) {
 	data := url.Values{}
 	data.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
 	data.Set("assertion", jwt)
-	
+
 	resp, err := http.PostForm("https://oauth2.googleapis.com/token", data)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("token exchange hatası (%d): %s", resp.StatusCode, string(bodyBytes))
 	}
-	
+
 	var tokenResponse struct {
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int    `json:"expires_in"`
 		TokenType   string `json:"token_type"`
 	}
-	
+
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResponse); err != nil {
 		return "", err
 	}
-	
+
 	return tokenResponse.AccessToken, nil
 }
 
@@ -1819,10 +1839,10 @@ func signRS256(input, privateKeyPEM string) (string, error) {
 	if block == nil {
 		return "", fmt.Errorf("PEM block bulunamadı")
 	}
-	
+
 	var privateKey interface{}
 	var err error
-	
+
 	// PKCS#8 veya PKCS#1 formatını dene
 	privateKey, err = x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
@@ -1831,23 +1851,23 @@ func signRS256(input, privateKeyPEM string) (string, error) {
 			return "", fmt.Errorf("private key parse hatası: %w", err)
 		}
 	}
-	
+
 	rsaKey, ok := privateKey.(*rsa.PrivateKey)
 	if !ok {
 		return "", fmt.Errorf("RSA private key değil")
 	}
-	
+
 	// SHA256 hash
 	h := sha256.New()
 	h.Write([]byte(input))
 	hashed := h.Sum(nil)
-	
+
 	// RSA imzala
 	signature, err := rsa.SignPKCS1v15(nil, rsaKey, crypto.SHA256, hashed)
 	if err != nil {
 		return "", fmt.Errorf("imzalama hatası: %w", err)
 	}
-	
+
 	// SECURITY FIX: Use stdlib base64 URL encoding
 	return base64.RawURLEncoding.EncodeToString(signature), nil
 }
@@ -1863,9 +1883,22 @@ func maskCredential(s string) string {
 	return s[:3] + "********"
 }
 
+// BUG FIX: Kaydedilen private proxy'leri textarea'da geri göstermek için
+// satır satır proxy URL metni üretir. Böylece sayfa yenilendiğinde / uygulama
+// yeniden başlatıldığında proxy listesi boş görünmüyor ve kaydetme sırasında silinmiyor.
+func buildProxyListText(proxies []config.PrivateProxy) string {
+	var sb strings.Builder
+	for _, pp := range proxies {
+		if pp.Host == "" || pp.Port <= 0 {
+			continue
+		}
+		sb.WriteString(pp.ToURL())
+		sb.WriteString("\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
 func escapeSSE(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
-
-

@@ -9,21 +9,21 @@ import (
 
 // ConfigJSON config.json dosya formatı (agents.json, operaagent ile uyumlu)
 type ConfigJSON struct {
-	ProxyHost           string   `json:"PROXY_HOST"`
-	ProxyPort           int      `json:"PROXY_PORT"`
-	ProxyUser           string   `json:"PROXY_USER"`
-	ProxyPass           string   `json:"PROXY_PASS"`
-	Lisans              string   `json:"LISANS"`
-	TargetQueries       []string `json:"targetQueries"`
-	TargetDomain        string   `json:"targetDomain"`
-	FallbackGAID        string   `json:"fallbackGAID"`
-	MaxPages            int      `json:"maxPages"`
-	DurationMinutes     int      `json:"durationMinutes"`
-	HitsPerMinute       int      `json:"hitsPerMinute"`
-	MaxConcurrentVisits int      `json:"maxConcurrentVisits"`
-	OutputDir           string   `json:"outputDir"`
-	ExportFormat        string   `json:"exportFormat"`
-	CanvasFingerprint   bool     `json:"canvasFingerprint"`
+	ProxyHost             string   `json:"PROXY_HOST"`
+	ProxyPort             int      `json:"PROXY_PORT"`
+	ProxyUser             string   `json:"PROXY_USER"`
+	ProxyPass             string   `json:"PROXY_PASS"`
+	Lisans                string   `json:"LISANS"`
+	TargetQueries         []string `json:"targetQueries"`
+	TargetDomain          string   `json:"targetDomain"`
+	FallbackGAID          string   `json:"fallbackGAID"`
+	MaxPages              int      `json:"maxPages"`
+	DurationMinutes       int      `json:"durationMinutes"`
+	HitsPerMinute         int      `json:"hitsPerMinute"`
+	MaxConcurrentVisits   int      `json:"maxConcurrentVisits"`
+	OutputDir             string   `json:"outputDir"`
+	ExportFormat          string   `json:"exportFormat"`
+	CanvasFingerprint     bool     `json:"canvasFingerprint"`
 	ScrollStrategy        string   `json:"scrollStrategy"`
 	SendScrollEvent       bool     `json:"sendScrollEvent"`
 	UseSitemap            bool     `json:"useSitemap"`
@@ -34,13 +34,17 @@ type ConfigJSON struct {
 	GitHubRepos           []string `json:"githubRepos"`
 	CheckerWorkers        int      `json:"checkerWorkers"`
 	// Private proxy listesi
-	PrivateProxies        []PrivateProxyJSON `json:"privateProxies"`
-	UsePrivateProxy       bool               `json:"usePrivateProxy"`
+	PrivateProxies  []PrivateProxyJSON `json:"privateProxies"`
+	UsePrivateProxy bool               `json:"usePrivateProxy"`
 	// Yeni alanlar
-	DeviceType        string   `json:"deviceType"`
-	DeviceBrands      []string `json:"deviceBrands"`
-	ReferrerKeyword   string   `json:"referrerKeyword"`
-	ReferrerEnabled   bool     `json:"referrerEnabled"`
+	DeviceType      string   `json:"deviceType"`
+	DeviceBrands    []string `json:"deviceBrands"`
+	ReferrerKeyword string   `json:"referrerKeyword"`
+	ReferrerEnabled bool     `json:"referrerEnabled"`
+	// BUG FIX: Tüm ayarların kaybolmaması için tam config anlık görüntüsü.
+	// Web arayüzünden kaydetme sırasında tüm alanlar buraya yazılır;
+	// yeniden başlatmada önce bu snapshot uygulanır, sonra legacy alanlar devreye girer.
+	AppConfig json.RawMessage `json:"appConfig,omitempty"`
 }
 
 // PrivateProxyJSON JSON formatında private proxy
@@ -79,14 +83,14 @@ func LoadFromJSON(path string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		TargetDomain:       j.TargetDomain,
-		MaxPages:           j.MaxPages,
-		DurationMinutes:    j.DurationMinutes,
-		HitsPerMinute:      j.HitsPerMinute,
-		OutputDir:          j.OutputDir,
-		ExportFormat:       j.ExportFormat,
-		MaxConcurrentVisits: j.MaxConcurrentVisits,
-		CanvasFingerprint:  j.CanvasFingerprint,
+		TargetDomain:          j.TargetDomain,
+		MaxPages:              j.MaxPages,
+		DurationMinutes:       j.DurationMinutes,
+		HitsPerMinute:         j.HitsPerMinute,
+		OutputDir:             j.OutputDir,
+		ExportFormat:          j.ExportFormat,
+		MaxConcurrentVisits:   j.MaxConcurrentVisits,
+		CanvasFingerprint:     j.CanvasFingerprint,
 		ScrollStrategy:        j.ScrollStrategy,
 		SendScrollEvent:       j.SendScrollEvent,
 		UseSitemap:            j.UseSitemap,
@@ -96,19 +100,19 @@ func LoadFromJSON(path string) (*Config, error) {
 		ProxySourceURLs:       j.ProxySourceURLs,
 		GitHubRepos:           j.GitHubRepos,
 		CheckerWorkers:        j.CheckerWorkers,
-		ProxyHost:          j.ProxyHost,
-		ProxyPort:          j.ProxyPort,
-		ProxyUser:          j.ProxyUser,
-		ProxyPass:          j.ProxyPass,
-		GtagID:             j.FallbackGAID,
+		ProxyHost:             j.ProxyHost,
+		ProxyPort:             j.ProxyPort,
+		ProxyUser:             j.ProxyUser,
+		ProxyPass:             j.ProxyPass,
+		GtagID:                j.FallbackGAID,
 		// Private proxy alanları
-		PrivateProxies:    privateProxies,
-		UsePrivateProxy:   j.UsePrivateProxy,
+		PrivateProxies:  privateProxies,
+		UsePrivateProxy: j.UsePrivateProxy,
 		// Yeni alanlar
-		DeviceType:        j.DeviceType,
-		DeviceBrands:      j.DeviceBrands,
-		ReferrerKeyword:   j.ReferrerKeyword,
-		ReferrerEnabled:   j.ReferrerEnabled,
+		DeviceType:      j.DeviceType,
+		DeviceBrands:    j.DeviceBrands,
+		ReferrerKeyword: j.ReferrerKeyword,
+		ReferrerEnabled: j.ReferrerEnabled,
 	}
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = "./reports"
@@ -123,6 +127,19 @@ func LoadFromJSON(path string) (*Config, error) {
 	if j.ProxyHost != "" && j.ProxyPort > 0 {
 		cfg.ProxyEnabled = true
 		cfg.ProxyURL = buildProxyURL(j.ProxyHost, j.ProxyPort, j.ProxyUser, j.ProxyPass)
+	}
+
+	// BUG FIX: Tam config anlık görüntüsü (appConfig) varsa uygula.
+	// Eski sürümler sadece alt küme yazardı; yeni sürümler tüm alanları appConfig'e yazar.
+	// Bu sayede uygulama yeniden başlatıldığında ayarlar sıfırlanmaz.
+	if len(j.AppConfig) > 0 {
+		var full Config
+		if err := json.Unmarshal(j.AppConfig, &full); err == nil {
+			*cfg = full
+		} else {
+			cfg.ApplyDefaults()
+			cfg.ComputeDerived()
+		}
 	}
 
 	cfg.ApplyDefaults()
